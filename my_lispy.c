@@ -671,6 +671,150 @@ lval* builtin_lambda(lenv* e, lval* a) {
   return lval_lambda(formals, body);
 }
 
+lval* lval_eval_sexpr(lenv* e, lval* v);
+
+lval* builtin_cond_op(lenv* e, lval* a, char* cond){
+    lval* x = lval_pop(a, 0);
+    
+    while (a->count > 0) {
+        lval* y = lval_pop(a, 0);
+        // This one is the is put convinient to read all the remaning conditionals are identical except first comparison signs
+        if (strcmp(cond, ">") == 0) { if(x->num > y->num)
+                                        { if(y->num == 0 && a->count == 0) x->num = 1;
+                                            else {x->num = y->num;} }
+                                      else{
+                                          lval_del(y);
+                                          x->num=0;
+                                          break;} }
+        if (strcmp(cond, ">=") == 0) {if(x->num >= y->num){ x->num = (y->num==0&&a->count==0) ? 1 : y->num; }else{ lval_del(y);x->num=0;break;} }
+        if (strcmp(cond, "<") == 0) { if(x->num < y->num){ if(y->num==0&&a->count==0)x->num=1; else {x->num = y->num;} }else{ lval_del(y);x->num=0;break;} }
+        if (strcmp(cond, "<=") == 0) { if(x->num <= y->num){ if(y->num==0&&a->count==0)x->num=1; else {x->num = y->num;} }else{ lval_del(y);x->num=0;break;} }
+        
+        lval_del(y);
+    }
+    
+    lval_del(a);
+    if (x->num != 0) {
+        x->num=1;
+        return x;
+    }
+    return x;
+}
+
+lval* builtin_greater_than(lenv* e, lval* a){
+    return builtin_cond_op(e, a, ">");
+}
+lval* builtin_greater_equal(lenv* e, lval* a){
+    return builtin_cond_op(e, a, ">=");
+}
+lval* builtin_smaller_than(lenv* e, lval* a){
+    return builtin_cond_op(e, a, "<");
+}
+lval* builtin_smaller_equal(lenv* e, lval* a){
+    return builtin_cond_op(e, a, "<=");
+}
+lval* builtin_equal_with(lenv* e, lval* a){
+    return builtin_cond_op(e, a, "==");
+}
+
+lval* builtin_if(lenv* e, lval* a){
+    LASSERT_NUM("if", a, 3);
+    LASSERT_TYPE("if", a, 0, LVAL_NUM);
+    LASSERT_TYPE("if", a, 1, LVAL_QEXPR);
+    LASSERT_TYPE("if", a, 2, LVAL_QEXPR);
+    
+    lval* cond = lval_pop(a, 0);
+    if (cond->num == 1) {
+        lval* result = lval_eval_sexpr(e,lval_take(a, 0));
+        lval_del(cond);
+        return result;
+    } else if (cond->num == 0){
+        lval* result = lval_eval_sexpr(e,lval_take(a, 1));
+        lval_del(cond);
+        return result;
+    }
+    return lval_err("Something went wrong in 'if' condition");
+}
+
+int lval_eq(lval* x, lval* y) {
+
+  /* Different Types are always unequal */
+  if (x->type != y->type) { return 0; }
+
+  /* Compare Based upon type */
+  switch (x->type) {
+    /* Compare Number Value */
+    case LVAL_NUM: return (x->num == y->num);
+
+    /* Compare String Values */
+    case LVAL_ERR: return (strcmp(x->err, y->err) == 0);
+    case LVAL_SYM: return (strcmp(x->sym, y->sym) == 0);
+
+    /* If builtin compare, otherwise compare formals and body */
+    case LVAL_FUN:
+      if (x->builtin || y->builtin) {
+        return x->builtin == y->builtin;
+      } else {
+        return lval_eq(x->formals, y->formals)
+          && lval_eq(x->body, y->body);
+      }
+
+    /* If list compare every individual element */
+    case LVAL_QEXPR:
+    case LVAL_SEXPR:
+      if (x->count != y->count) { return 0; }
+      for (int i = 0; i < x->count; i++) {
+        /* If any element not equal then whole list not equal */
+        if (!lval_eq(x->cell[i], y->cell[i])) { return 0; }
+      }
+      /* Otherwise lists must be equal */
+      return 1;
+    break;
+  }
+  return 0;
+}
+
+lval* builtin_cmp(lenv* e, lval* a, char* op) {
+  LASSERT_NUM(op, a, 2);
+  int r;
+  if (strcmp(op, "==") == 0) {
+    r =  lval_eq(a->cell[0], a->cell[1]);
+  }
+  if (strcmp(op, "!=") == 0) {
+    r = !lval_eq(a->cell[0], a->cell[1]);
+  }
+  lval_del(a);
+  return lval_num(r);
+}
+
+lval* builtin_eq(lenv* e, lval* a) {
+  return builtin_cmp(e, a, "==");
+}
+
+lval* builtin_ne(lenv* e, lval* a) {
+  return builtin_cmp(e, a, "!=");
+}
+
+/* this took me crazy amount of time!!! (2 days) Just nuts. */
+lval* builtin_fun(lenv* e, lval* a){
+    LASSERT_NUM("fun", a, 2);
+    LASSERT_TYPE("fun", a, 0, LVAL_QEXPR);
+    LASSERT_TYPE("fun", a, 1, LVAL_QEXPR);
+    
+    /* Pop the first symbol of the first Q-expr (name of the function) */
+    lval* name = lval_add(lval_qexpr(), lval_pop(a->cell[0], 0));
+    LASSERT_TYPE("fun", name, 0, LVAL_SYM);
+    
+    /* Then pop the entire first Q-expr contaning argument list
+       then second Q-expression containing the function */
+    lval* lambda = lval_add(lval_sexpr(), lval_pop(a, 0));
+    lambda = lval_add(lambda, lval_pop(a, 0));
+    lambda = builtin_lambda(e, lambda);
+    a = lval_add(a, name);
+    a = lval_add(a, lambda);
+    return builtin_def(e, a);
+}
+
 void lenv_add_builtin(lenv* e, char* name, lbuiltin func) {
   lval* k = lval_sym(name);
   lval* v = lval_builtin(func);
@@ -680,9 +824,11 @@ void lenv_add_builtin(lenv* e, char* name, lbuiltin func) {
 
 void lenv_add_builtins(lenv* e) {
     /* Variable Functions */
-     lenv_add_builtin(e, "\\",  builtin_lambda);
-     lenv_add_builtin(e, "def", builtin_def);
-     lenv_add_builtin(e, "=",   builtin_put);
+    lenv_add_builtin(e, "\\",  builtin_lambda);
+    lenv_add_builtin(e, "def", builtin_def);
+    lenv_add_builtin(e, "=",   builtin_put);
+    lenv_add_builtin(e, "fun", builtin_fun);
+    // def {fun} (\ {args body} {def (head args) (\ (tail args) body)})
     
   /* List Functions */
   lenv_add_builtin(e, "list", builtin_list);
@@ -696,6 +842,15 @@ void lenv_add_builtins(lenv* e) {
   lenv_add_builtin(e, "-", builtin_sub);
   lenv_add_builtin(e, "*", builtin_mul);
   lenv_add_builtin(e, "/", builtin_div);
+    
+    /* Conditional Functions */
+    lenv_add_builtin(e, "if", builtin_if);
+    lenv_add_builtin(e, ">", builtin_greater_than);
+    lenv_add_builtin(e, ">=", builtin_greater_equal);
+    lenv_add_builtin(e, "<", builtin_smaller_than);
+    lenv_add_builtin(e, "<=", builtin_smaller_equal);
+    lenv_add_builtin(e, "==", builtin_eq);
+    lenv_add_builtin(e, "!=", builtin_ne);
 }
 
 
@@ -787,7 +942,7 @@ int main(int argc, char** argv) {
     ",
     Number, Symbol, Sexpr, Qexpr, Expr, Lispy);
   
-  puts("Lispy Version 0.0.0.0.6");
+  puts("Lispy Version 0.0.0.0.9");
   puts("Press Ctrl+c to Exit\n");
   
     lenv* e = lenv_new();
