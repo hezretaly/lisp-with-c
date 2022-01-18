@@ -1,5 +1,6 @@
 #include "mpc.h"
 #include <editline/readline.h>
+#define LIBRARY_LSPY "library.lspy"
 
 /* Parser Declariations */
 
@@ -518,24 +519,54 @@ lval* builtin_list(lenv* e, lval* a) {
   return a;
 }
 
+// Also Adopted for strings
 lval* builtin_head(lenv* e, lval* a) {
   LASSERT_NUM("head", a, 1);
-  LASSERT_TYPE("head", a, 0, LVAL_QEXPR);
-  LASSERT_NOT_EMPTY("head", a, 0);
-  
-  lval* v = lval_take(a, 0);
-  while (v->count > 1) { lval_del(lval_pop(v, 1)); }
-  return v;
+  //LASSERT_TYPE("head", a, 0, LVAL_QEXPR);
+  LASSERT(a, (a->cell[0]->type == LVAL_QEXPR || a->cell[0]->type == LVAL_STR),
+  "Function '%s' cannot define non-symbol. "
+  "Got %s, Expected %s or %s.", "head",
+  ltype_name(a->cell[0]->type),
+  ltype_name(LVAL_QEXPR),ltype_name(LVAL_STR));
+    if (a->cell[0]->type == LVAL_QEXPR) {
+        LASSERT_NOT_EMPTY("head", a, 0);
+        lval* v = lval_take(a, 0);
+        while (v->count > 1) { lval_del(lval_pop(v, 1)); }
+        return v;
+    }else if (a->cell[0]->type == LVAL_STR){
+        char* str = (char*)malloc(sizeof(char));
+        str[0] = a->cell[0]->str[0];
+        lval* x = lval_str(str);
+        lval_del(a);free(str);
+        return x;
+    }
+    lval_del(a);
+    return lval_err("'head' function reached the end");
 }
 
 lval* builtin_tail(lenv* e, lval* a) {
   LASSERT_NUM("tail", a, 1);
-  LASSERT_TYPE("tail", a, 0, LVAL_QEXPR);
-  LASSERT_NOT_EMPTY("tail", a, 0);
-
-  lval* v = lval_take(a, 0);
-  lval_del(lval_pop(v, 0));
-  return v;
+  //LASSERT_TYPE("tail", a, 0, LVAL_QEXPR);
+  
+    LASSERT(a, (a->cell[0]->type == LVAL_QEXPR || a->cell[0]->type == LVAL_STR),
+    "Function '%s' cannot define non-symbol. "
+    "Got %s, Expected %s or %s.", "tail",
+    ltype_name(a->cell[0]->type),
+    ltype_name(LVAL_QEXPR),ltype_name(LVAL_STR));
+  
+    if (a->cell[0]->type == LVAL_QEXPR) {
+         LASSERT_NOT_EMPTY("tail", a, 0);
+         lval* v = lval_take(a, 0);
+         lval_del(lval_pop(v, 0));
+         return v;
+     }else if (a->cell[0]->type == LVAL_STR){
+         char* str =  a->cell[0]->str+1;
+         lval* x = lval_str(str);
+         lval_del(a);
+         return x;
+     }
+     lval_del(a);
+     return lval_err("'tail' function reached the end");
 }
 
 lval* builtin_eval(lenv* e, lval* a) {
@@ -548,19 +579,45 @@ lval* builtin_eval(lenv* e, lval* a) {
 }
 
 lval* builtin_join(lenv* e, lval* a) {
-
-  for (int i = 0; i < a->count; i++) {
-    LASSERT_TYPE("join", a, i, LVAL_QEXPR);
-  }
-  
-  lval* x = lval_pop(a, 0);
-  
-  while (a->count) {
-    x = lval_join(x, lval_pop(a, 0));
-  }
-  
+  LASSERT(a, (a->cell[0]->type == LVAL_QEXPR || a->cell[0]->type == LVAL_STR),
+  "Function '%s' cannot define non-symbol. "
+  "Got %s, Expected %s or %s.", "join",
+  ltype_name(a->cell[0]->type),
+  ltype_name(LVAL_QEXPR),ltype_name(LVAL_STR));
+    if (a->cell[0]->type == LVAL_QEXPR) {
+        for (int i = 0; i < a->count; i++) {
+          LASSERT_TYPE("join", a, i, LVAL_QEXPR);
+        }
+        
+        lval* x = lval_pop(a, 0);
+        
+        while (a->count) {
+          x = lval_join(x, lval_pop(a, 0));
+        }
+        
+        lval_del(a);
+        return x;
+    } else if (a->cell[0]->type == LVAL_STR){
+        for (int i = 0; i < a->count; i++) {
+          LASSERT_TYPE("join", a, i, LVAL_STR);
+        }
+        
+        char* x = malloc(512);
+        
+        while (a->count) {
+            lval* y = lval_pop(a, 0);
+            strcat(x, y->str);
+            lval_del(y);
+        }
+        
+        lval_del(a);
+        x = realloc(x,strlen(x)+1);
+        lval* res = lval_str(x);
+        free(x);
+        return res;
+    }
   lval_del(a);
-  return x;
+  return lval_err("'join' function reached the end");
 }
 
 /* Additional functions */
@@ -711,6 +768,10 @@ lval* builtin_lambda(lenv* e, lval* a) {
 lval* lval_eval_sexpr(lenv* e, lval* v);
 
 lval* builtin_cond_op(lenv* e, lval* a, char* cond){
+    for (int i=0; i<a->count; i++) {
+           LASSERT_TYPE(cond, a, i, LVAL_NUM);
+       }
+    
     lval* x = lval_pop(a, 0);
     
     while (a->count > 0) {
@@ -1009,6 +1070,18 @@ void lenv_add_builtins(lenv* e) {
     
 }
 
+// function to load the library on starting the programm
+void lenv_load_library(lenv* e){
+    lval* library = lval_add(lval_sexpr(),lval_str(LIBRARY_LSPY));
+    library = builtin_load(e,library);
+    if (library->type == LVAL_ERR) {
+        lval_println(library);
+        lval_del(library);
+    }else{
+        lval_del(library);
+    }
+}
+
 
 lval* lval_eval_sexpr(lenv* e, lval* v) {
   
@@ -1125,6 +1198,9 @@ int main(int argc, char** argv) {
   
     lenv* e = lenv_new();
     lenv_add_builtins(e);
+    // to load the library on startup don't comment line
+    // (lenv_load_library function) below, comment otherwise
+    lenv_load_library(e);
     
     if (argc == 1) {
           while (1) {

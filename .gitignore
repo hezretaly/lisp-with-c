@@ -1,1 +1,6 @@
+# Mac OS related files
 .DS_Store
+
+# Unix executable files
+exec_files/
+
